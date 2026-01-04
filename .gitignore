@@ -1,0 +1,6 @@
+data.csv
+weights.csv
+goals.csv
+__pycache__/
+.env
+*.db
