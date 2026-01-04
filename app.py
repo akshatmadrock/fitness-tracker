@@ -105,24 +105,18 @@ st.title("🔥 Fitness Tracker")
 person = st.selectbox("Who are you?", PEOPLE)
 
 # ================== PERSONAL INFO ==================
-with st.expander("👤 Personal info (auto from data)", expanded=False):
-    c1, c2, c3 = st.columns(3)
+with st.expander("👤 Personal info", expanded=False):
+    c1,c2,c3 = st.columns(3)
 
     with c1:
-        height = st.number_input(
-            "Height (cm)", 100, 230,
-            175 if person=="Akshat" else 160
-        )
+        height = st.number_input("Height (cm)", 100, 230, 175 if person=="Akshat" else 160)
 
     with c2:
         age = st.number_input("Age", 13, 120, 24)
         sex = st.selectbox("Sex", ["Male","Female"])
 
     with c3:
-        latest_weight = get_latest_weight(
-            person,
-            75.0 if person=="Akshat" else 60.0
-        )
+        latest_weight = get_latest_weight(person, 75.0 if person=="Akshat" else 60.0)
         bmr = conservative_bmr(sex, latest_weight, height, age)
         st.metric("Latest weight", f"{latest_weight:.1f} kg")
         st.metric("Conservative BMR", f"{int(bmr)} kcal")
@@ -131,21 +125,20 @@ with st.expander("👤 Personal info (auto from data)", expanded=False):
 st.subheader("📝 Daily Activity")
 
 with st.form("daily"):
-    c1,c2,c3 = st.columns(3)
+    log_date = st.date_input("Date", value=date.today())
 
+    c1,c2,c3 = st.columns(3)
     with c1:
         eaten = st.number_input("Calories eaten", 0, 5000, 1800)
         steps = st.number_input("Steps", 0, 40000, 8000)
-
     with c2:
         walk_met = st.selectbox("Walking MET", [2.8,3.5,4.5])
         walk_mins = st.number_input("Walking minutes", 0, 300, 0)
-
     with c3:
         wt_mins = st.number_input("Weight training minutes", 0, 300, 30)
         wt_met = st.selectbox("Weight training MET", [3.5,5.0,6.0])
 
-    submit = st.form_submit_button("Save today")
+    submit = st.form_submit_button("Save daily log")
 
 if submit:
     active = (
@@ -157,7 +150,7 @@ if submit:
 
     conn = get_conn()
     pd.DataFrame([{
-        "date": date.today().isoformat(),
+        "date": log_date.isoformat(),
         "person": person,
         "calories_eaten": eaten,
         "steps": steps,
@@ -172,24 +165,20 @@ if submit:
     }]).to_sql("daily_log", conn, if_exists="append", index=False)
     conn.close()
 
-    st.success("Saved ✅")
+    st.success("Daily log saved ✅")
 
 # ================== WEEKLY WEIGHT ==================
 st.subheader("⚖️ Weekly Weight")
 
 with st.form("weight"):
-    w = st.number_input(
-        "Enter weight (kg)",
-        30.0, 250.0,
-        latest_weight,
-        step=0.1
-    )
+    weigh_date = st.date_input("Week date", value=date.today())
+    w = st.number_input("Weight (kg)", 30.0, 250.0, latest_weight, step=0.1)
     log = st.form_submit_button("Save weight")
 
 if log:
     conn = get_conn()
     pd.DataFrame([{
-        "date": date.today().isoformat(),
+        "date": weigh_date.isoformat(),
         "person": person,
         "weight": w
     }]).to_sql("weekly_weight", conn, if_exists="append", index=False)
@@ -200,11 +189,7 @@ if log:
 st.subheader("🎯 Goal")
 
 with st.form("goal"):
-    target = st.number_input(
-        "Target weight (kg)",
-        30.0, 250.0,
-        latest_weight - 5
-    )
+    target = st.number_input("Target weight (kg)", 30.0, 250.0, latest_weight-5)
     setg = st.form_submit_button("Save goal")
 
 if setg:
@@ -223,72 +208,43 @@ st.subheader("📊 Actual vs Predicted Weight")
 
 pw = weights[weights.Person == person].copy()
 pdaily = df[df.Person == person].copy()
-pg = goals[goals.Person == person]
 
-if not pw.empty and not pdaily.empty and not pg.empty:
+if not pw.empty and not pdaily.empty:
     pw["Date"] = pd.to_datetime(pw["Date"])
     pdaily["Date"] = pd.to_datetime(pdaily["Date"])
 
     pw = pw.sort_values("Date")
     pdaily = pdaily.sort_values("Date")
 
-    start_date = min(pw["Date"].min(), pdaily["Date"].min())
-    end_date = max(pw["Date"].max(), pdaily["Date"].max())
-
     timeline = pd.DataFrame({
-        "Date": pd.date_range(start_date, end_date, freq="D")
+        "Date": pd.date_range(
+            min(pw.Date.min(), pdaily.Date.min()),
+            max(pw.Date.max(), pdaily.Date.max()),
+            freq="D"
+        )
     })
 
-    actual = timeline.merge(
-        pw[["Date","Weight"]],
-        on="Date",
-        how="left"
-    )
+    actual = timeline.merge(pw[["Date","Weight"]], on="Date", how="left")
     actual["Weight"] = actual["Weight"].ffill()
     start_weight = actual.iloc[0]["Weight"]
 
-    daily = timeline.merge(
-        pdaily[["Date","Net Calories"]],
-        on="Date",
-        how="left"
-    ).fillna(0)
-
-    predicted = start_weight + (
-        daily["Net Calories"].clip(upper=0).cumsum() * 0.75
-    ) / 7700
+    daily = timeline.merge(pdaily[["Date","Net Calories"]], on="Date", how="left").fillna(0)
+    predicted = start_weight + (daily["Net Calories"].clip(upper=0).cumsum()*0.75)/7700
 
     plot_df = pd.concat([
-        pd.DataFrame({"Date":timeline["Date"],"Weight":actual["Weight"],"Type":"Actual"}),
-        pd.DataFrame({"Date":timeline["Date"],"Weight":predicted,"Type":"Predicted"})
+        pd.DataFrame({"Date":timeline.Date,"Weight":actual.Weight,"Type":"Actual"}),
+        pd.DataFrame({"Date":timeline.Date,"Weight":predicted,"Type":"Predicted"})
     ])
 
-    y_min = plot_df["Weight"].min() - 0.15
-    y_max = plot_df["Weight"].max() + 0.15
-
     chart = alt.Chart(plot_df).mark_line(point=True).encode(
-        x=alt.X("Date:T", title="Date"),
-        y=alt.Y(
-            "Weight:Q",
-            scale=alt.Scale(domain=[y_min, y_max], zero=False),
-            axis=alt.Axis(format=".1f", tickCount=8),
-            title="Weight (kg)"
-        ),
-        color=alt.Color(
-            "Type:N",
-            scale=alt.Scale(
-                domain=["Actual","Predicted"],
-                range=["#2ecc71","#e67e22"]
-            )
-        )
-    ).properties(
-        height=380,
-        title="Actual (solid) vs Predicted (dashed)"
-    )
+        x="Date:T",
+        y=alt.Y("Weight:Q", axis=alt.Axis(format=".1f")),
+        color="Type:N"
+    ).properties(height=380)
 
     st.altair_chart(chart, use_container_width=True)
-
 else:
-    st.info("Log daily activity + weekly weight to see progress.")
+    st.info("Add dated daily logs and weekly weights to see graphs.")
 
 st.markdown("---")
-st.caption("Weight is the source of truth. Calories guide direction. Predictions are conservative estimates.")
+st.caption("Weight = truth. Calories = guidance. Predictions are conservative.")
